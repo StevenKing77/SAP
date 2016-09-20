@@ -1,0 +1,369 @@
+*&---------------------------------------------------------------------*
+*&  包括                ZMM01_MJBZJP_001
+*&---------------------------------------------------------------------*
+TYPES:
+      sbdst_classname LIKE bapibds01-classname,
+      sbdst_classtype LIKE bapibds01-classtype,
+      sbdst_object_key LIKE bapibds01-objkey,
+      sbdst_signature LIKE bapisignat OCCURS 1,
+      sbdst_components LIKE bapicompon OCCURS 1,
+      sbdst_uri LIKE bapiuri OCCURS 1.
+
+
+DATA:
+      control     TYPE REF TO i_oi_container_control,
+      error       TYPE REF TO i_oi_error,
+      container   TYPE REF TO cl_gui_custom_container,
+      errors      TYPE REF TO i_oi_error OCCURS 0 WITH HEADER LINE,
+      app(80)     TYPE c,
+      excel(80)   VALUE 'Excel.Sheet',
+      document_type(80),
+      initialized(1).
+
+DATA:
+      l_app_name(200),
+      item_url(256),
+      inplace.
+
+
+DATA:
+      spreadsheet TYPE REF TO i_oi_spreadsheet,
+      document    TYPE REF TO i_oi_document_proxy.
+
+*&---------------------------------------------------------------------*
+*&                      Default values                                 *
+*&---------------------------------------------------------------------*
+DATA: g_def_active_sheetname(50). "value 'DataResource1'.
+DATA: g_def_startup_macroname(50) VALUE 'Module1.start_up'.
+DATA: g_def_prv_macroname(50) VALUE 'Module1.PrintPreview'.
+DATA: no_flush(1) TYPE c VALUE 'X'.
+
+
+*&---------------------------------------------------------------------*
+*&         Form  CREATE_BASIC_OBJECTS  output                          *
+*&---------------------------------------------------------------------*
+FORM  create_basic_objects USING p_app_name
+
+p_classname
+
+p_classtype
+
+p_obj_key
+
+p_docname
+
+p_index.
+
+* get the SAP DOI interface references.
+* this work has just to be done once !
+  CHECK initialized IS INITIAL.
+* first get the SAP DOI i_oi_container_control interface
+  CALL METHOD
+    c_oi_container_control_creator=>get_container_control
+    IMPORTING
+      control = control
+      error   = error.
+* check no errors occured
+  CALL METHOD error->raise_message
+    EXPORTING
+      type = 'E'.
+* create a control container as defined in ***TOP ( maybe in
+* dynpro
+* 100)
+  CREATE OBJECT container
+    EXPORTING
+      container_name = 'CONTAINER'.
+* initialize the SAP DOI Container, tell it to run in the
+*container
+* specified above and tell it to run Excel in-place
+
+  CALL METHOD control->init_control
+    EXPORTING
+      r3_application_name      = l_app_name
+      inplace_enabled          = inplace
+      inplace_scroll_documents = 'X'
+      parent                   = container
+      register_on_close_event  = 'X'
+      register_on_custom_event = 'X'
+      no_flush                 = 'X'
+    IMPORTING
+      error                    = errors.
+* save error object in collection
+  APPEND errors.
+
+
+
+* predefined excel doc. was saved in R/3
+* business document service: OAOR
+* here we get the URL according to its information.
+  CLEAR item_url.
+  DATA: bds_instance TYPE REF TO cl_bds_document_set.
+  DATA: doc_classname TYPE sbdst_classname VALUE 'ZEXCEL',
+        doc_classtype TYPE sbdst_classtype VALUE 'OT',
+        doc_object_key TYPE sbdst_object_key VALUE 'ZMM01_MJBZJP',
+        doc_components TYPE sbdst_components,
+        doc_signature TYPE sbdst_signature,
+        doc_uris TYPE sbdst_uri,
+        wa_doc_uris LIKE LINE OF doc_uris,
+        wa_doc_signature LIKE LINE OF doc_signature.
+
+
+  IF  NOT (  p_classname IS INITIAL OR p_classtype IS INITIAL
+           OR p_obj_key IS INITIAL ).
+    doc_classname =  p_classname.
+    doc_classtype =  p_classtype.
+    doc_object_key = p_obj_key.
+  ENDIF.
+
+*  wa_doc_signature-prop_name = 'DESCRIPTION'.
+*  app = 'excel'.
+*  if app = 'excel'.  " default value.
+*    document_type = excel.
+*    wa_doc_signature-prop_value = p_docname.
+*  else.
+*    "document_type = lotus.
+*    "wa_doc_signature-prop_value = 'SPREAD123'.
+*  endif.
+*  append wa_doc_signature to doc_signature.
+
+  CREATE OBJECT bds_instance.
+
+  CALL METHOD bds_instance->get_info
+    EXPORTING
+      classname  = doc_classname
+      classtype  = doc_classtype
+      object_key = doc_object_key
+    CHANGING
+      components = doc_components
+      signature  = doc_signature.
+
+  CALL METHOD bds_instance->get_with_url
+    EXPORTING
+      classname  = doc_classname
+      classtype  = doc_classtype
+      object_key = doc_object_key
+    CHANGING
+      uris       = doc_uris
+      signature  = doc_signature.
+  FREE bds_instance.
+
+  READ TABLE doc_uris INTO wa_doc_uris INDEX p_index.
+
+  item_url = wa_doc_uris-uri.
+
+
+*  **********************
+* ask the SAP DOI container for a i_oi_document_proxy for Excel
+  CALL METHOD control->get_document_proxy
+                      EXPORTING document_type = 'Excel.Sheet'
+"default
+                                no_flush = 'X'
+*                       REGISTER_CONTAINER = 'X'
+                      IMPORTING document_proxy = document
+                                error = errors.
+  APPEND errors.
+
+
+* open a document saved in business document service.
+  CALL METHOD document->open_document
+    EXPORTING
+      open_inplace = inplace
+      document_url = item_url.
+  " protect_document = 'X'.
+* check if our document proxy can serve a spreadsheet interface
+
+  DATA: has TYPE i.
+  CALL METHOD document->has_spreadsheet_interface
+    EXPORTING
+      no_flush     = ''
+    IMPORTING
+      is_available = has
+      error        = errors.
+  APPEND errors.
+  CALL METHOD document->get_spreadsheet_interface
+    EXPORTING
+      no_flush        = ' '
+    IMPORTING
+      sheet_interface = spreadsheet
+      error           = errors.
+  APPEND errors.
+
+  LOOP AT errors.
+    CALL METHOD errors->raise_message
+      EXPORTING
+        type = 'E'.
+  ENDLOOP.
+  FREE errors.
+
+  initialized = 'X'.
+* now loop through error collection because
+* Get_spreadsheet_interface flushed and synchronized
+* the automation queue !
+ENDFORM.              " CREATE_BASIC_OBJECTS
+
+*&---------------------------------------------------------------------*
+*&      Form  ACTIVE_SHEET
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->SHEETNAME  text
+*----------------------------------------------------------------------*
+FORM active_sheet USING sheetname.
+* Activate  sheet
+  g_def_active_sheetname = sheetname.
+  CALL METHOD spreadsheet->select_sheet
+    EXPORTING
+      name     = g_def_active_sheetname
+      no_flush = ''
+    IMPORTING
+      error    = errors.
+  APPEND errors.
+
+  LOOP AT errors.
+    CALL METHOD errors->raise_message
+      EXPORTING
+        type = 'E'.
+  ENDLOOP.
+  FREE errors.
+
+
+ENDFORM.              " CREATE_BASIC_OBJECTS
+
+
+
+DATA: ranges TYPE soi_range_list.
+DATA: excel_input TYPE soi_generic_table.
+DATA: rangeitem TYPE soi_range_item.
+DATA: excel_input_wa TYPE soi_generic_item.
+
+*&---------------------------------------------------------------------*
+*&         Form  FILL CELL                                             *
+*&---------------------------------------------------------------------*
+FORM fill_cell  USING i j val flag.
+* spreadsheet interface was created in FORM "CREATE_BASIC_OBJECTS"
+
+* create an excel range for our data
+  DATA: columns_number TYPE i,
+          rows_number TYPE i.
+
+  columns_number = 1.
+  rows_number = 1.
+
+  CALL METHOD spreadsheet->insert_range_dim
+    EXPORTING
+      name     = 'cell'
+      top      = i
+      left     = j
+      rows     = rows_number
+      no_flush = 'X'
+      columns  = columns_number
+    IMPORTING
+      error    = errors.
+  APPEND errors.
+
+  REFRESH: ranges, excel_input.
+  rangeitem-name = 'cell'.
+  rangeitem-columns = 1.
+  rangeitem-rows = 1.
+  APPEND rangeitem TO ranges.
+
+  excel_input_wa-column = 1.
+  excel_input_wa-row = 1.
+  excel_input_wa-value = val.
+  APPEND excel_input_wa TO excel_input.
+
+* set data
+  CALL METHOD spreadsheet->set_ranges_data
+    EXPORTING
+      ranges   = ranges
+      contents = excel_input
+      no_flush = 'X'
+    IMPORTING
+      error    = errors.
+  APPEND errors.
+
+  IF flag <> 0.
+    CALL METHOD spreadsheet->fit_widest
+      EXPORTING
+        name     = space
+        no_flush = 'X'.
+  ENDIF.
+
+  REFRESH: ranges, excel_input.
+ENDFORM.              " FILL CELL
+
+*&---------------------------------------------------------------------*
+*&         Form  FILL table                                            *
+*&---------------------------------------------------------------------*
+FORM fill_table TABLES itab
+                USING  top left rows columns flag .
+  DATA:
+    dimension_name(256) VALUE 'CELL',
+    temp_rows TYPE i,
+    temp_columns TYPE i,
+    temp_top TYPE i,
+    temp_left TYPE i.
+
+  temp_rows = rows.
+  temp_columns = columns.
+  temp_top = top.
+  temp_left = left.
+
+  CALL METHOD spreadsheet->get_dimension
+    EXPORTING
+      name     = dimension_name
+      no_flush = no_flush
+    IMPORTING
+      top      = top
+      left     = left
+      rows     = rows
+      columns  = columns
+      error    = errors.
+  APPEND errors.
+
+  rows = temp_rows.
+  columns = temp_columns.
+  top = temp_top.
+  left = temp_left.
+
+  CALL METHOD spreadsheet->insert_range_dim
+    EXPORTING
+      name     = dimension_name
+      top      = top
+      left     = left
+      rows     = rows
+      no_flush = no_flush
+      columns  = columns
+    IMPORTING
+      error    = errors.
+  APPEND errors.
+
+  REFRESH: ranges, excel_input.
+  rangeitem-name = dimension_name.
+  rangeitem-columns = columns.
+  rangeitem-rows = rows.
+  APPEND rangeitem TO ranges.
+
+  LOOP AT itab INTO excel_input_wa.
+    APPEND excel_input_wa TO excel_input.
+  ENDLOOP.
+
+* set data
+
+  CALL METHOD spreadsheet->set_ranges_data
+    EXPORTING
+      ranges   = ranges
+      contents = excel_input
+      no_flush = no_flush
+    IMPORTING
+      error    = errors.
+  APPEND errors.
+
+  IF flag <> 0.
+    CALL METHOD spreadsheet->fit_widest
+      EXPORTING
+        name     = space
+        no_flush = no_flush.
+  ENDIF.
+
+ENDFORM.               "FORM FILL_TABLE
