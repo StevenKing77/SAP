@@ -1,0 +1,522 @@
+﻿REPORT  ZMM01_MJBZJ NO STANDARD PAGE HEADING MESSAGE-ID zmessage LINE-SIZE 100.     "运行后弹出的消息内容长度
+INCLUDE ZMM01_MJBZJ_001.
+
+TYPE-POOLS: vrm.
+TABLES: sscrfields,
+t100. "存放消息的表
+
+CONSTANTS:
+  c_doc_name(16) TYPE c VALUE 'ZMM01_MJBZJ.xls' .
+
+DATA url_ind   TYPE i   VALUE 1.
+DATA:
+  top TYPE i,
+  left TYPE i,
+  row_number TYPE i,
+  col_number TYPE i.
+DATA: bapi_exe_result(1) TYPE c.   "bapi执行结果标识
+DATA: total TYPE i,
+  num TYPE i VALUE '0',
+  g_file TYPE string,
+  g_error TYPE c.
+
+DATA:
+ BEGIN OF it_table OCCURS 0,   "工作区it_table
+   row(4) TYPE c,
+   column(4) TYPE c,
+   value(256) TYPE c,
+ END OF it_table.
+
+DATA: name TYPE vrm_id,
+      list TYPE vrm_values,
+      value LIKE LINE OF list.
+
+DATA: headdata TYPE bapimathead,     "表头数据
+      clientdata TYPE bapi_mara,       "基本数据
+      clientdatax TYPE bapi_marax,
+      plantdata TYPE bapi_marc,         "工厂数据
+      plantdatax TYPE bapi_marcx,
+      valuationdata TYPE bapi_mbew,      "会计数据
+      valuationdatax TYPE bapi_mbewx.
+
+
+DATA: materialdescription TYPE TABLE OF bapi_makt WITH HEADER LINE."描述
+DATA: unitsofmeasure TYPE TABLE OF bapi_marm WITH HEADER LINE.
+DATA: unitsofmeasurex TYPE TABLE OF bapi_marmx WITH HEADER LINE.
+
+DATA: itab2 TYPE alsmex_tabline OCCURS 0 WITH HEADER LINE.  "----------------------
+
+DATA: l_bapireturn1 LIKE bapireturn1,"返回参数
+      it_num        LIKE bapimatinr OCCURS 0 WITH HEADER LINE."物料编号，用来接收自动生成的号
+
+DATA pr_unit TYPE meins."基本单位
+DATA return TYPE bapiret2.
+
+DATA: BEGIN OF msg OCCURS 0,
+material TYPE matnr,
+description TYPE maktx,
+message(97) TYPE c,
+END OF msg.
+
+DATA:BEGIN OF itab OCCURS 0,
+*输入界面
+  head_material TYPE matnr,"物料号
+  head_ind_sector TYPE mbrsh,"行业领域
+  head_matl_type TYPE mtart,"物料类型
+*基本视图
+  t_makt_matl_desc TYPE maktx,"物料描述
+  mara_base_uom TYPE meins,"基本计量单位
+  mara_matl_group TYPE matkl,"物料组
+  mara_item_cat TYPE mtpos_mara,"普通项目组类别
+  mara_size_dim TYPE groes,"大小/量纲
+  mara_std_descr TYPE normt,"标准
+*采购视图
+  marc_plant TYPE werks_d, "工厂
+  marc_pur_group TYPE ekgrp, "采购组
+  marc_auto_p_ord TYPE kautb,"自动采购单
+*会计视图
+  mbew_val_area TYPE bwkey, "会计评估范围
+  mbew_price_ctrl TYPE vprsv, "价格
+  mbew_price_unit TYPE peinh, "价格单位
+  mbew_val_class TYPE bklas, "评估类
+  t(256) TYPE c,
+END OF itab,
+line(1000) TYPE c, "存放excel文件的一行
+"itab2 LIKE TABLE OF line WITH HEADER LINE, "存放excel文件的内表
+itab1 LIKE TABLE OF itab WITH HEADER LINE. "定义导入数据的内表
+
+"PARAMETERS  p_file TYPE string.
+
+PARAMETERS: p_file LIKE rlgrap-filename OBLIGATORY.
+
+SELECTION-SCREEN: BEGIN OF BLOCK b1 WITH FRAME TITLE text1.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text2.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text3.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN: SKIP 1.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text4.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text5.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text6.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN: SKIP 1.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text7.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text8.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN: COMMENT 1(79) text9.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN:END OF BLOCK b1.
+
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  "PERFORM get_file.
+
+  PERFORM get_file2."------------------------------
+
+INITIALIZATION.
+  text1 = '程序说明及注意事项'.
+  text2 = '请用EXCEL制作一个第一行格式如下的文件，并另存为‘*.XLS’文件'.
+  text3 = '名称  规格  标准'.
+  text4 = '程序说明：'.
+  text5 = '1.本程序可以批量维护上海模具制造部的模具标准件物料。'.
+  text6 = '2.在执行本程序后，您可以点击左上角的导出按钮，保存至本地，方便您物料号的记录。'.
+  text7 = '注意事项：'.
+  text8 = '1.请不要在打开XLS导入文件的情况下执行本程序，否则程序会报错。'.
+  text9 = '2.请确保XLS导入文件的数据填写格式正确。'.
+
+*START-OF-SELECTION.
+**upload excel file
+*  CALL FUNCTION 'GUI_UPLOAD'
+*    EXPORTING
+*      filename                = g_file                      "file1
+*      codepage                = '8400'
+*    TABLES
+*      data_tab                = itab2
+*    EXCEPTIONS
+*      file_open_error         = 1
+*      file_read_error         = 2
+*      no_batch                = 3
+*      gui_refuse_filetransfer = 4
+*      invalid_type            = 5
+*      no_authority            = 6
+*      unknown_error           = 7
+*      bad_data_format         = 8
+*      header_not_allowed      = 9
+*      separator_not_allowed   = 10
+*      header_too_long         = 11
+*      unknown_dp_error        = 12
+*      access_denied           = 13
+*      dp_out_of_memory        = 14
+*      disk_full               = 15
+*      dp_timeout              = 16
+*      OTHERS                  = 17.
+*  IF sy-subrc <> 0.
+*    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+*            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+*    EXIT.
+*  ENDIF.
+
+  START-OF-SELECTION."--------------------------------------------------------------
+  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'    "读取excel文件中的内容
+    EXPORTING
+      filename    = p_file
+      i_begin_col = '1'
+      i_begin_row = '2'
+      i_end_col   = '255'
+      i_end_row   = '65536'
+    TABLES
+      intern      = itab2.
+  "SORT itab2 BY row col value.
+
+  LOOP AT itab2.
+    CASE itab2-col.
+      WHEN 1.
+        itab-t_makt_matl_desc = itab2-value.
+      WHEN 2.
+        itab-mara_size_dim = itab2-value.
+      WHEN 3.
+        itab-mara_std_descr = itab2-value.
+        APPEND itab TO itab1.             "excel表有3列,append要加在最后一列.
+        CLEAR itab.
+    ENDCASE.
+  ENDLOOP.
+  DESCRIBE TABLE itab1 LINES total.
+
+*  DELETE itab2 FROM 1 TO 1. "删除标题行
+*  DESCRIBE TABLE itab2 LINES total.
+*  LOOP AT itab2.
+*    SPLIT itab2 AT ',' INTO itab-t_makt_matl_desc itab-mara_size_dim itab-mara_std_descr.
+*    APPEND itab TO itab1.
+*  ENDLOOP.
+
+  LOOP AT itab1 INTO itab.
+    num = num + 1.
+    PERFORM putdata.
+    IF g_error EQ 'X'.
+      CONTINUE.
+    ELSE.
+      PERFORM run.
+    ENDIF.
+  ENDLOOP.
+
+  SET PF-STATUS 'STA1'.                "导出程序
+
+AT USER-COMMAND.
+  CASE sy-ucomm.
+    WHEN 'EXPORT'.
+      PERFORM tran_to_excel.
+  ENDCASE.
+
+*&---------------------------------------------------------------------*
+*&      Form  run
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM run.
+
+  CLEAR headdata.
+  headdata-material       = itab-head_material.
+  headdata-matl_type      = itab-head_matl_type.
+  headdata-ind_sector     = itab-head_ind_sector.
+  headdata-basic_view     = 'X'.  "基本数据视图
+
+
+  CLEAR pr_unit.
+  PERFORM frm_unit USING itab-mara_base_uom CHANGING pr_unit."基本单位
+
+  CLEAR clientdata.
+  clientdata-base_uom = pr_unit."基本计量单位
+  clientdata-matl_group = itab-mara_matl_group."物料组
+  clientdata-item_cat = itab-mara_item_cat."普通项目组类别
+  clientdata-size_dim = itab-mara_size_dim."大小/量纲
+  clientdata-std_descr = itab-mara_std_descr. "标准
+
+  "bapi_mara 的复选框结构
+  CLEAR clientdatax.
+  clientdatax-base_uom = 'X'."基本计量单位
+  clientdatax-matl_group = 'X'."物料组
+  clientdatax-item_cat = 'X'."普通项目组类别
+  clientdatax-size_dim = 'X'."大小/量纲
+  clientdatax-std_descr = 'X'. "标准
+
+  headdata-purchase_view  = 'X'.  "采购视图
+  CLEAR plantdata.
+  plantdata-plant = itab-marc_plant."工厂
+  plantdata-pur_group = itab-marc_pur_group."采购组
+  plantdata-auto_p_ord = itab-marc_auto_p_ord."自动采购单
+
+  CLEAR plantdatax.
+  plantdatax-plant = '3000'.    "这里不传X，要传3000
+  plantdatax-pur_group = 'X'."采购组
+  plantdatax-auto_p_ord = 'X'."自动采购单
+
+  headdata-account_view   = 'X'.  "会计视图
+  CLEAR valuationdata.
+  valuationdata-val_area = itab-mbew_val_area.
+  valuationdata-price_ctrl = itab-mbew_price_ctrl.
+  valuationdata-price_unit = itab-mbew_price_unit.
+  valuationdata-val_class  = itab-mbew_val_class. "评估类
+
+  CLEAR valuationdatax.
+  valuationdatax-val_area = '3000'.    "这里不传X，要传3000
+  valuationdatax-price_ctrl = 'X'.
+  valuationdatax-price_unit = 'X'.
+  valuationdatax-val_class  = 'X'. "评估类
+
+  "物料描述
+  CLEAR materialdescription[].
+  materialdescription-langu_iso = 'ZH'.
+  materialdescription-matl_desc = itab-t_makt_matl_desc.
+  APPEND materialdescription.
+
+
+  CLEAR return.
+  CALL FUNCTION 'BAPI_MATERIAL_SAVEDATA'
+    EXPORTING
+      headdata            = headdata
+      clientdata          = clientdata
+      clientdatax         = clientdatax
+      plantdata           = plantdata
+      plantdatax          = plantdatax
+      valuationdata       = valuationdata
+      valuationdatax      = valuationdatax
+    IMPORTING
+      return              = return
+    TABLES
+      materialdescription = materialdescription[].
+
+  IF return-type NE 'E'.
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
+    bapi_exe_result = 'X'.
+  ELSE.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    bapi_exe_result = ''.
+  ENDIF.
+
+*  IF return-type NE 'E'.
+*    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+*      EXPORTING
+*        wait = 'X'.
+*  ELSE.
+*    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+*  ENDIF.
+
+  WAIT UP TO 1 SECONDS.
+  DATA: per TYPE f,
+  txt TYPE string.
+  per = ( num / total ) * 100.
+
+  DATA: str1 TYPE string,
+  str2 TYPE string.
+  str1 = num.
+  str2 = total.
+
+  CONCATENATE '正在批量创建物料......已完成：（' str1 '/' str2 ')' INTO txt.
+
+  CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+    EXPORTING
+      percentage = per
+      text       = txt.
+
+   WRITE : return-type,return-message.
+ENDFORM.                                                      "run
+
+*&---------------------------------------------------------------------*
+*&      Form  putdata
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM putdata.
+  CLEAR g_error.
+
+  IF itab-head_material IS INITIAL.
+    CALL FUNCTION 'BAPI_MATERIAL_GETINTNUMBER'
+      EXPORTING
+        material_type    = 'ZROH'  "必填
+        industry_sector  = 'M'
+        required_numbers = 1
+      IMPORTING
+        return           = l_bapireturn1
+      TABLES
+        material_number  = it_num.
+    IF l_bapireturn1-type CA 'EA'."如果是错误或中断就回滚~~~
+      ROLLBACK WORK.
+      g_error = 'X'.
+    ELSE.
+      CLEAR g_error.
+      LOOP AT it_num.
+        itab-head_material = it_num-material.
+      ENDLOOP.
+    ENDIF.
+  ELSE.
+    CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+      EXPORTING
+        input  = itab-head_material
+      IMPORTING
+        output = itab-head_material.
+  ENDIF.
+
+  itab-head_material = itab-head_material.
+  itab-head_ind_sector = 'M'.
+  itab-head_matl_type = 'ZROH'.
+  itab-mara_base_uom = 'EA'."基本计量单位
+  itab-mara_matl_group = '19018'."物料组
+  itab-mara_item_cat = 'NORM'."普通项目组类别
+  itab-mara_size_dim = itab-mara_size_dim."规格
+  itab-mara_std_descr = itab-mara_std_descr."标准
+  itab-t_makt_matl_desc = itab-t_makt_matl_desc."物料描述
+
+  itab-marc_plant = '3000'.
+  itab-marc_pur_group = '109'. "采购组
+  itab-marc_auto_p_ord = 'X'."自动采购单
+
+  itab-mbew_val_area = '3000'. "会计评估范围
+  itab-mbew_price_ctrl = 'V'. "价格
+  itab-mbew_price_unit = '1'. "价格单位
+  itab-mbew_val_class = '4000'."评估类
+
+
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'               "物料号前补4个零
+    EXPORTING
+      input  = itab-head_material
+    IMPORTING
+      output = itab-head_material.
+
+  APPEND itab.
+
+ENDFORM.                                                    "putdata
+
+*获取基本计量单位内码
+
+FORM frm_unit USING unit1 CHANGING unit2.
+  CALL FUNCTION 'CONVERSION_EXIT_CUNIT_INPUT'
+    EXPORTING
+      input          = unit1
+      language       = sy-langu
+    IMPORTING
+      output         = unit2
+    EXCEPTIONS
+      unit_not_found = 1
+      OTHERS         = 2.
+  IF sy-subrc <> 0.
+*   message id sy-msgid type sy-msgty number sy-msgno
+*           with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+ENDFORM.                    "frm_unit
+
+
+*&---------------------------------------------------------------------*
+*&      SUB DESC   TRANSFER DATA TO EXCEL FILE                         *
+*&      SUB NAME   TRAN_TO_EXCEL                                       *
+*&      PARA IN    N/A                                                 *
+*&      PARA OUT   N/A                                                 *
+*&---------------------------------------------------------------------*
+FORM tran_to_excel.
+  PERFORM create_basic_objects USING
+                       ''  '' '' '' c_doc_name url_ind.
+  PERFORM active_sheet USING 'sheet1'.
+  PERFORM tran_main_whole.
+
+ENDFORM.                    " TRAN_TO_EXCEL
+
+*&---------------------------------------------------------------------*
+*&      Form  tran_main_whole
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM tran_main_whole.
+  DATA: row  TYPE i,
+        col  TYPE i.
+
+  REFRESH it_table. CLEAR it_table.
+  "填充
+  LOOP AT itab.
+    row = sy-tabix ."读入每一行数据，row是数据行数  row=1--4  首先row=1 往下循环 col=1 col=2 。。。把第1行数据填入excel 再读第2行
+
+    col = 1.
+    it_table-row = row.it_table-column = col.   "物料号
+    it_table-value = itab-head_material.APPEND it_table.
+    CLEAR it_table.
+
+    col = 2.
+    it_table-row = row.it_table-column = col.   "名称
+    it_table-value = itab-t_makt_matl_desc.APPEND it_table.
+    CLEAR it_table.
+
+    col = 3.
+    it_table-row = row.it_table-column = col.   "规格
+    it_table-value = itab-mara_size_dim.APPEND it_table.
+    CLEAR it_table.
+
+    col = 4.
+    it_table-row = row.it_table-column = col.   "标准
+    it_table-value = itab-mara_std_descr. APPEND it_table.
+    CLEAR it_table.
+
+  ENDLOOP.
+
+  top = 5.                                                  "从第5行开始填入数据
+  left = 1.                                                 "从第1列开始填入数据
+  col_number = 4.
+  DESCRIBE TABLE itab LINES row_number.                  "得到itab的行数，赋值给row_number
+  PERFORM fill_table  TABLES it_table  USING  top left row_number col_number 0."表从5行1列开始 表大小X行4列  "复制工作区到excel表
+
+    row = 2.
+    col = 3.
+    PERFORM fill_cell USING row col '模具原材料(上海)' 0.
+
+ENDFORM.                    " TRAN_MAIN_WHOLE.
+
+*&---------------------------------------------------------------------*
+*&      Form  get_file
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM get_file .
+  CALL FUNCTION 'WS_FILENAME_GET'
+    EXPORTING
+      def_filename     = p_file
+      mask             = ',CSV文件(逗号分隔)（*.CSV）,*.CSV.'
+      mode             = 'O'
+      title            = 'File Name'
+    IMPORTING
+      filename         = p_file
+    EXCEPTIONS
+      inv_winsys       = 1
+      no_batch         = 2
+      selection_cancel = 3
+      selection_error  = 4
+      OTHERS           = 5.
+  g_file = p_file.
+ENDFORM.                    " GET_FILE
+
+
+FORM get_file2.
+  CALL FUNCTION 'WS_FILENAME_GET'
+    EXPORTING
+      def_filename     = p_file
+      mask             = ',Excel Files,*.xls,All Files,*.*.'
+      mode             = 'O'
+      title            = '选择文件'
+    IMPORTING
+      filename         = p_file
+    EXCEPTIONS
+      inv_winsys       = 1
+      no_batch         = 2
+      selection_cancel = 3
+      selection_error  = 4
+      OTHERS           = 5.
+ENDFORM.                    " GET_FILE
